@@ -531,6 +531,12 @@ const App: React.FC = () => {
         toggleDesigner={toggleDesigner}
         toggleTheme={toggleTheme}
       />
+
+      <footer className="pt-10 pb-6 text-center text-sm text-[var(--text-muted)] opacity-80">
+        <p className="mx-auto max-w-2xl">
+          “The more you focus within, the clearer everything around you becomes.”
+        </p>
+      </footer>
     </div>
   );
 };
