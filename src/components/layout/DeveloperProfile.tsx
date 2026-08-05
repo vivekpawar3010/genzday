@@ -47,7 +47,7 @@ export const DeveloperProfile: React.FC<DeveloperProfileProps> = ({
               <span className="text-[9px] font-black text-[var(--text-main)] uppercase tracking-widest">LinkedIn</span>
             </a>
             <a 
-              href="https://github.com" 
+              href="https://github.com/vivekpawar3010" 
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white/10 transition-all group/link"
@@ -58,7 +58,7 @@ export const DeveloperProfile: React.FC<DeveloperProfileProps> = ({
               <span className="text-[9px] font-black text-[var(--text-main)] uppercase tracking-widest">GitHub</span>
             </a>
             <a 
-              href="https://vivekpawar.vercel.app/" 
+              href="https://genzday.vercel.app" 
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white/10 transition-all group/link"
@@ -66,7 +66,7 @@ export const DeveloperProfile: React.FC<DeveloperProfileProps> = ({
               <div className="w-8 h-8 rounded-xl bg-black/5 flex items-center justify-center group-hover/link:bg-[var(--accent)] group-hover/link:text-white transition-all">
                 <Globe className="w-4 h-4" />
               </div>
-              <span className="text-[9px] font-black text-[var(--text-main)] uppercase tracking-widest">Portfolio (Working)</span>
+              <span className="text-[9px] font-black text-[var(--text-main)] uppercase tracking-widest">Portfolio</span>
             </a>
           </div>
         </div>
