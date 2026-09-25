@@ -19,6 +19,7 @@ import {
 } from './types/index';
 import { DEFAULT_ROUTINE, THEME_PRESETS } from './utils/constants';
 import { timeToMinutes } from './utils/time';
+import { extractColorsFromImage, applyDynamicThemeColors } from './utils/themeColorExtractor';
 
 // Components
 import { DashboardStats } from './features/dashboard/DashboardStats';
@@ -37,6 +38,29 @@ import { GoalCard } from './features/goals/GoalCard';
 import { DreamCard } from './features/dreams/DreamCard';
 import { ThreeDBackground } from './features/theme/ThreeDBackground';
 
+// Auth & Admin Modules
+import { useAuth } from './hooks/useAuth';
+import { AuthModal, UserProfileModal, PendingApprovalPage } from './components/auth';
+import { AdminConsoleModal } from './features/admin';
+import { backupLocalDataToCloud } from './services/cloudSync';
+
+const checkIsKingRoute = () => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  return path === '/king' || path.startsWith('/king/') || hash.includes('/king');
+};
+
+function safeJsonParse<T>(key: string, fallback: T): T {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : fallback;
+  } catch (err) {
+    console.warn(`Error parsing localStorage key "${key}":`, err);
+    return fallback;
+  }
+}
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('vtm_theme_v6') as Theme) || 'default');
@@ -45,7 +69,7 @@ const App: React.FC = () => {
   // Theme Customization State
   const [customBgUrl, setCustomBgUrl] = useState(() => localStorage.getItem('vtm_custom_bg_v6') || '');
   const [customBaseStyle, setCustomBaseStyle] = useState<Theme>(() => (localStorage.getItem('vtm_custom_base_v6') as Theme) || 'default');
-  const [savedThemes, setSavedThemes] = useState<CustomTheme[]>(() => JSON.parse(localStorage.getItem('vtm_saved_themes_v6') || '[]'));
+  const [savedThemes, setSavedThemes] = useState<CustomTheme[]>(() => safeJsonParse('vtm_saved_themes_v6', []));
   const [showDesigner, setShowDesigner] = useState(false);
   const [themeDraftName, setThemeDraftName] = useState('');
   const [isAILoading, setIsAILoading] = useState(false);
@@ -53,12 +77,51 @@ const App: React.FC = () => {
 
   const designerRef = useRef<HTMLDivElement>(null);
 
-  // Core Data
-  const [tasks, setTasks] = useState<TaskItemType[]>(() => JSON.parse(localStorage.getItem('vtm_tasks_v6') || '[]'));
-  const [routine, setRoutine] = useState<RoutineItem[]>(() => JSON.parse(localStorage.getItem('vtm_routine_v6') || JSON.stringify(DEFAULT_ROUTINE)));
-  const [progressData, setProgressData] = useState<DailyProgress[]>(() => JSON.parse(localStorage.getItem('vtm_progress_v6') || '[]'));
-  const [goals, setGoals] = useState<CardItem[]>(() => JSON.parse(localStorage.getItem('vtm_goals_v6') || '[]'));
-  const [dreams, setDreams] = useState<CardItem[]>(() => JSON.parse(localStorage.getItem('vtm_dreams_v6') || '[]'));
+  // Auth & Admin State
+  const { user, isMaster, isAdmin, signInWithGoogle, signInWithEmail, signUpWithEmail, logout, refreshUserProfile } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAdminConsole, setShowAdminConsole] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [covertClickCount, setCovertClickCount] = useState(0);
+
+  // Dedicated /king Route & Pending Approval State
+  const [isKingRoute, setIsKingRoute] = useState<boolean>(checkIsKingRoute);
+  const [dismissPendingNotice, setDismissPendingNotice] = useState(false);
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const isKing = checkIsKingRoute();
+      setIsKingRoute(isKing);
+      if (isKing) {
+        setShowAdminConsole(true);
+      }
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
+  }, []);
+
+  const handleCloseAdminConsole = () => {
+    setShowAdminConsole(false);
+    if (window.location.hash.includes('/king')) {
+      window.location.hash = '';
+    }
+    if (window.location.pathname.toLowerCase().startsWith('/king')) {
+      window.history.pushState({}, '', '/');
+    }
+    setIsKingRoute(false);
+  };
+
+  // Core Data with safe parsing
+  const [tasks, setTasks] = useState<TaskItemType[]>(() => safeJsonParse('vtm_tasks_v6', []));
+  const [routine, setRoutine] = useState<RoutineItem[]>(() => safeJsonParse('vtm_routine_v6', DEFAULT_ROUTINE));
+  const [progressData, setProgressData] = useState<DailyProgress[]>(() => safeJsonParse('vtm_progress_v6', []));
+  const [goals, setGoals] = useState<CardItem[]>(() => safeJsonParse('vtm_goals_v6', []));
+  const [dreams, setDreams] = useState<CardItem[]>(() => safeJsonParse('vtm_dreams_v6', []));
 
   // Profile Pinning Logic (Hide on scroll)
   useEffect(() => {
@@ -102,6 +165,56 @@ const App: React.FC = () => {
       document.documentElement.removeAttribute('data-base');
     }
   }, [theme, wakeUpTime, tasks, routine, progressData, goals, dreams, customBgUrl, customBaseStyle, savedThemes]);
+
+  // Dynamic Background Image Text & Card Color Adaptation
+  useEffect(() => {
+    let isMounted = true;
+    const currentImageUrl = theme === 'custom' 
+      ? customBgUrl 
+      : THEME_PRESETS.find(p => p.id === theme)?.bgUrl || '';
+
+    extractColorsFromImage(currentImageUrl, theme === 'custom' ? customBaseStyle : theme).then(colors => {
+      if (isMounted) {
+        applyDynamicThemeColors(colors);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [theme, customBgUrl, customBaseStyle]);
+
+  // Auto-migrate local data when an active user logs in
+  useEffect(() => {
+    if (user && user.status === 'active' && !user.hasMigratedLocalData) {
+      backupLocalDataToCloud(user);
+    }
+  }, [user]);
+
+  // Covert master shortcut listener (Ctrl + Shift + U)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'u') {
+        if (isMaster || isAdmin) {
+          setShowAdminConsole(prev => !prev);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMaster, isAdmin]);
+
+  const handleCovertClick = () => {
+    if (!isMaster) return;
+    setCovertClickCount(prev => {
+      const next = prev + 1;
+      if (next >= 5) {
+        setShowAdminConsole(true);
+        return 0;
+      }
+      return next;
+    });
+  };
 
   // Task Filtering Logic
   const todayTasks = useMemo(() => {
@@ -370,6 +483,35 @@ const App: React.FC = () => {
 
       <Header />
 
+      {/* Non-intrusive Pending Status Banner */}
+      {user && user.status === 'pending' && !dismissPendingNotice && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 mb-6 animate-fadeIn">
+          <div className="glass p-3.5 sm:p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-lg">
+            <div className="flex items-center gap-2.5 text-amber-300">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+              <span>
+                <strong>Registration Pending Confirmation:</strong> Your cloud sync is awaiting administrator approval. You have full access to your routines and habits locally on this device.
+              </span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+              <button
+                onClick={() => setShowPendingModal(true)}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-black uppercase text-[10px] tracking-wider transition-all shadow-md"
+              >
+                Check Status / Code
+              </button>
+              <button
+                onClick={() => setDismissPendingNotice(true)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition-all text-xs"
+                title="Dismiss notice"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ThemeDesigner 
         showDesigner={showDesigner}
         setShowDesigner={setShowDesigner}
@@ -530,12 +672,74 @@ const App: React.FC = () => {
         showDesigner={showDesigner}
         toggleDesigner={toggleDesigner}
         toggleTheme={toggleTheme}
+        user={user}
+        onOpenAuth={() => setShowAuthModal(true)}
+        onOpenProfile={() => setShowProfileModal(true)}
       />
 
+      {/* Authentication Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onGoogleSignIn={signInWithGoogle}
+        onEmailSignIn={signInWithEmail}
+        onEmailSignUp={signUpWithEmail}
+      />
+
+      {/* User Profile Modal */}
+      {user && (
+        <UserProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          user={user}
+          isAdmin={isAdmin}
+          onOpenAdminConsole={() => setShowAdminConsole(true)}
+          onLogout={logout}
+        />
+      )}
+
+      {/* Expansive Bigger Admin Console Modal */}
+      <AdminConsoleModal
+        isOpen={showAdminConsole || isKingRoute}
+        onClose={handleCloseAdminConsole}
+        currentUser={user}
+        isMaster={isMaster}
+        isAdmin={isAdmin}
+        onOpenAuth={() => setShowAuthModal(true)}
+      />
+
+      {/* Pending Approval Modal (Non-blocking) */}
+      {showPendingModal && user && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-6 animate-fadeIn">
+          <div 
+            className="absolute inset-0 bg-black/80 backdrop-blur-md" 
+            onClick={() => setShowPendingModal(false)} 
+          />
+          <div className="relative w-full max-w-xl z-10 animate-scaleIn">
+            <PendingApprovalPage
+              user={user}
+              onRefreshUser={refreshUserProfile}
+              onContinueLocal={() => setShowPendingModal(false)}
+              onLogout={() => {
+                logout();
+                setShowPendingModal(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       <footer className="pt-10 pb-6 text-center text-sm text-[var(--text-muted)] opacity-80">
-        <p className="mx-auto max-w-2xl">
+        <p className="mx-auto max-w-2xl mb-2">
           “The more you focus within, the clearer everything around you becomes.”
         </p>
+        <span 
+          onClick={handleCovertClick}
+          className="text-[9px] font-mono opacity-30 hover:opacity-80 transition-opacity cursor-default select-none inline-block"
+          title="System Build"
+        >
+          v2.4.0-genzday
+        </span>
       </footer>
     </div>
   );
